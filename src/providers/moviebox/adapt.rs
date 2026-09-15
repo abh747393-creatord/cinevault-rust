@@ -613,7 +613,7 @@ pub fn resolve_dash_manifest_from_policy(sign_cookie: &str) -> Option<String> {
             if !base_resource.is_empty()
                 && (base_resource.starts_with("http://") || base_resource.starts_with("https://"))
             {
-                return Some(format!("{base_resource}/index_web.mpd"));
+                return Some(format!("{base_resource}/index.mpd"));
             }
         }
     }

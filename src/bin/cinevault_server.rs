@@ -264,12 +264,19 @@ async fn homepage_handler(
     }
 }
 
+fn clean_id(id: &str) -> &str {
+    id.strip_prefix("mb-")
+        .or_else(|| id.strip_prefix("c-"))
+        .unwrap_or(id)
+}
+
 async fn debug_play_info_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let play_info = state.service.client.get_play_info(&id, 0, 0).await.ok();
-    let resources = state.service.client.get_resources(&id, 0, 0, 1, None, 10).await.ok();
+    let clean_id = clean_id(&id);
+    let play_info = state.service.client.get_play_info(clean_id, 0, 0).await.ok();
+    let resources = state.service.client.get_resources(clean_id, 0, 0, 1, None, 10).await.ok();
     Ok(Json(serde_json::json!({
         "play_info": play_info,
         "resources": resources,
@@ -282,7 +289,8 @@ async fn details_handler(
     Query(query): Query<DetailsQuery>,
 ) -> Result<Json<MediaDetails>, (StatusCode, String)> {
     let provider = parse_provider(query.provider.as_deref());
-    match state.service.details_typed(provider, &id).await {
+    let clean_id = clean_id(&id);
+    match state.service.details_typed(provider, clean_id).await {
         Ok(details) => Ok(Json(details)),
         Err(ProviderError::NotFound) => Err((StatusCode::NOT_FOUND, "Media not found".to_string())),
         Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
@@ -298,10 +306,11 @@ async fn streams_handler(
     let provider = parse_provider(query.provider.as_deref());
     let season = query.season.unwrap_or(0);
     let episode = query.episode.unwrap_or(0);
+    let clean_id = clean_id(&id);
 
     let raw_releases: Vec<Release> = match provider {
         ProviderKind::MovieBox => {
-            state.service.client.episode_streams(&id, season, episode).await.map_err(|e| {
+            state.service.client.episode_streams(clean_id, season, episode).await.map_err(|e| {
                 (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
             })?
         }
@@ -565,9 +574,10 @@ async fn subtitles_handler(
     Query(query): Query<SubtitlesQuery>,
     client_headers: HeaderMap,
 ) -> Result<Json<Vec<WebSubtitleOption>>, (StatusCode, String)> {
+    let clean_id = clean_id(&id);
     let resource_id = query.resource_id.unwrap_or_default();
     let base_url = state.base_url(Some(&client_headers));
-    match state.service.get_ext_captions(&id, &resource_id, &[]).await {
+    match state.service.get_ext_captions(clean_id, &resource_id, &[]).await {
         Ok(captions) => {
             let web_subs = captions
                 .into_iter()
@@ -638,6 +648,14 @@ async fn subtitles_proxy_handler(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging to stdout for Render / container visibility
+    let log_level = std::env::var("RUST_LOG")
+        .or_else(|_| std::env::var("MOVIEBOX_LOG"))
+        .unwrap_or_else(|_| "info".to_string());
+    if let Ok(logger) = flexi_logger::Logger::try_with_str(&log_level) {
+        let _ = logger.log_to_stdout().format(flexi_logger::opt_format).start();
+    }
+
     let port = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse::<u16>().ok())

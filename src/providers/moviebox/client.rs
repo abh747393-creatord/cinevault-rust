@@ -6,14 +6,14 @@ use reqwest::Response;
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use url::Url;
 
-const HOST_POOL: &[&str] = &[
+pub const HOST_POOL: &[&str] = &[
     "https://api6.aoneroom.com",
     "https://api5.aoneroom.com",
     "https://api4.aoneroom.com",
     "https://api4sg.aoneroom.com",
     "https://api3.aoneroom.com",
-    "https://api6sg.aoneroom.com",
     "https://api.inmoviebox.com",
 ];
 
@@ -47,6 +47,22 @@ pub struct MovieBoxClient {
 impl Default for MovieBoxClient {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn classify_reqwest_error(err: &reqwest::Error) -> &'static str {
+    if err.is_timeout() {
+        "timeout"
+    } else if err.is_connect() {
+        "TCP/connect failure"
+    } else if err.is_decode() {
+        "decode/schema failure"
+    } else if err.is_body() {
+        "body read failure"
+    } else if err.is_request() {
+        "request building failure"
+    } else {
+        "network/TLS failure"
     }
 }
 
@@ -271,15 +287,22 @@ impl MovieBoxClient {
                 builder = builder.body(b.to_string());
             }
 
-            match builder.send().await {
+            let start = std::time::Instant::now();
+            let send_res = builder.send().await;
+            let elapsed_ms = start.elapsed().as_millis();
+            let host_domain = Url::parse(base)
+                .ok()
+                .and_then(|u| u.host_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| base.to_string());
+
+            match send_res {
                 Ok(resp) => {
                     self.absorb_x_user(resp.headers()).await;
                     let status = resp.status().as_u16();
 
                     if RETRY_STATUS_CODES.contains(&status) {
                         log::warn!(
-                            "moviebox host {idx} returned retryable status {status}: {}",
-                            crate::logging::sanitize_url(&url)
+                            "moviebox host [{idx}] {host_domain} returned retryable status {status} in {elapsed_ms}ms"
                         );
                         if status == 429 {
                             backoff_ms = resp
@@ -296,27 +319,29 @@ impl MovieBoxClient {
                     self.active_base_idx.store(idx, Ordering::Relaxed);
 
                     match self.parse_response(resp).await {
-                        Ok(val) => return Ok(val),
+                        Ok(val) => {
+                            log::info!("moviebox host [{idx}] {host_domain} OK ({status}) in {elapsed_ms}ms");
+                            return Ok(val);
+                        }
                         Err(error) => {
                             log::warn!(
-                                "moviebox host {idx} parse failed: {error} [{}]",
-                                crate::logging::sanitize_url(&url)
+                                "moviebox host [{idx}] {host_domain} response parse failed: {error} in {elapsed_ms}ms"
                             );
                             continue;
                         }
                     }
                 }
                 Err(error) => {
+                    let err_cat = classify_reqwest_error(&error);
                     log::warn!(
-                        "moviebox host {idx} request failed: {error} [{}]",
-                        crate::logging::sanitize_url(&url)
+                        "moviebox host [{idx}] {host_domain} request failed ({err_cat}): {error} in {elapsed_ms}ms"
                     );
                     continue;
                 }
             }
         }
 
-        log::error!("moviebox: all hosts exhausted for [redacted]");
+        log::error!("moviebox: all hosts exhausted (tried {} hosts)", HOST_POOL.len());
         Err(ScraperError::HostsExhausted)
     }
 

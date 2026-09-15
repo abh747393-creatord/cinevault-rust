@@ -27,6 +27,7 @@ fn fallback_servers() -> Vec<std::net::IpAddr> {
     servers.extend_from_slice(CLOUDFLARE_IPS);
     servers.extend_from_slice(GOOGLE_IPS);
     servers.extend_from_slice(QUAD9_IPS);
+    servers.sort_by_key(|ip| if ip.is_ipv4() { 0 } else { 1 });
     servers
 }
 
@@ -46,7 +47,7 @@ fn build_resolver() -> TokioResolver {
             TokioConnectionProvider::default(),
         ),
     };
-    builder.options_mut().ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
+    builder.options_mut().ip_strategy = LookupIpStrategy::Ipv4thenIpv6;
     builder.build()
 }
 
@@ -55,11 +56,17 @@ impl Resolve for FallbackResolver {
         let resolver = Arc::clone(&GLOBAL_RESOLVER);
         Box::pin(async move {
             let lookup = resolver.lookup_ip(name.as_str()).await?;
-            let addrs: Addrs = Box::new(
-                lookup
-                    .into_iter()
-                    .map(|address| SocketAddr::new(address, 0)),
-            );
+            let mut ipv4_addrs: Vec<SocketAddr> = Vec::new();
+            let mut ipv6_addrs: Vec<SocketAddr> = Vec::new();
+            for address in lookup {
+                if address.is_ipv4() {
+                    ipv4_addrs.push(SocketAddr::new(address, 0));
+                } else {
+                    ipv6_addrs.push(SocketAddr::new(address, 0));
+                }
+            }
+            ipv4_addrs.extend(ipv6_addrs);
+            let addrs: Addrs = Box::new(ipv4_addrs.into_iter());
             Ok(addrs)
         })
     }
@@ -107,11 +114,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn built_resolver_prefers_ipv4_and_ipv6_lookup() {
+    async fn built_resolver_prefers_ipv4_then_ipv6_lookup() {
         let resolver = build_resolver();
         assert_eq!(
             resolver.options().ip_strategy,
-            LookupIpStrategy::Ipv4AndIpv6
+            LookupIpStrategy::Ipv4thenIpv6
         );
     }
 
