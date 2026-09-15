@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: cinevault-rust-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PUBLIC_SERVER_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false

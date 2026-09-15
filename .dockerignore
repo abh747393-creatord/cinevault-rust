@@ -1,0 +1,10 @@
+target/
+.git/
+.github/
+.githooks/
+docs/
+Formula/
+tests/
+*.log
+install.sh
+install.ps1
