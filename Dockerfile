@@ -1,7 +1,7 @@
 # Multi-stage production build for CineVault Rust API on Render / Linux
 
 # Stage 1: Builder
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.89-bookworm AS builder
 
 WORKDIR /usr/src/app
 
