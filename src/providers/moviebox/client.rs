@@ -17,7 +17,7 @@ pub const HOST_POOL: &[&str] = &[
     "https://api.inmoviebox.com",
 ];
 
-const RETRY_STATUS_CODES: &[u16] = &[403, 406, 407, 429, 500, 502, 503, 504];
+const RETRY_STATUS_CODES: &[u16] = &[403, 407, 429, 500, 502, 503, 504];
 
 #[derive(thiserror::Error, Debug)]
 pub enum ScraperError {
@@ -357,6 +357,10 @@ impl MovieBoxClient {
 
     async fn parse_response(&self, resp: Response) -> Result<Value, ScraperError> {
         let status = resp.status();
+        if status.as_u16() == 406 {
+            log::warn!("moviebox host returned 406 (find no content), returning empty streams structure");
+            return Ok(serde_json::json!({ "streams": [] }));
+        }
         if !status.is_success() {
             return Err(ScraperError::ApiStatus(status.as_u16()));
         }

@@ -102,13 +102,19 @@ impl crate::providers::ReleaseProvider for client::MovieBoxClient {
                 })
         });
 
-        let json = play_info_res.map_err(ProviderError::from)?;
-        let mut releases =
-            adapt::moviebox_play_info_json_to_releases(&json, season, episode, self.user_agent());
+        let mut releases = match play_info_res {
+            Ok(json) => adapt::moviebox_play_info_json_to_releases(&json, season, episode, self.user_agent()),
+            Err(e) => {
+                log::warn!("moviebox play_info failed: {e}; falling back to direct resources");
+                Vec::new()
+            }
+        };
 
         if let Some(upload_id) = upload_resource_id {
             for rel in &mut releases {
-                rel.resource_id = Some(upload_id.clone());
+                if rel.resource_id.is_none() {
+                    rel.resource_id = Some(upload_id.clone());
+                }
             }
         }
 

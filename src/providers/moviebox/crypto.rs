@@ -207,6 +207,12 @@ pub fn build_signed_headers(
         reqwest::header::HeaderName::from_static("x-client-status"),
         "0",
     );
+    let spoofed_ip = random_indian_ip();
+    insert_header(
+        &mut headers,
+        reqwest::header::HeaderName::from_static("x-forwarded-for"),
+        &spoofed_ip,
+    );
 
     if let Some(token) = auth_token {
         let bearer = format!("Bearer {}", token);
@@ -214,6 +220,20 @@ pub fn build_signed_headers(
     }
 
     headers
+}
+
+pub(crate) fn random_indian_ip() -> String {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+
+    let prefixes: &[&str] = &[
+        "103.241", "49.36", "117.195", "106.198", "122.162", "157.32", "182.70", "103.58", "27.60",
+        "59.90",
+    ];
+    let prefix = prefixes[rng.random_range(0..prefixes.len())];
+    let c: u8 = rng.random_range(1..254);
+    let d: u8 = rng.random_range(1..254);
+    format!("{}.{}.{}", prefix, c, d)
 }
 
 pub(crate) fn generate_client_info_and_ua() -> (String, String) {
@@ -239,18 +259,10 @@ pub(crate) fn generate_client_info_and_ua() -> (String, String) {
     ];
     let version_code = 50020126;
     let network_types = ["NETWORK_WIFI", "NETWORK_MOBILE"];
-    let timezones = [
-        "Asia/Kolkata",
-        "Asia/Shanghai",
-        "Asia/Tokyo",
-        "America/New_York",
-        "Europe/London",
-    ];
 
     let android = android_versions[rng.random_range(0..android_versions.len())];
     let device = redmi_devices[rng.random_range(0..redmi_devices.len())];
     let network = network_types[rng.random_range(0..network_types.len())];
-    let timezone = timezones[rng.random_range(0..timezones.len())];
     let gaid = random_uuid();
     let device_id = random_hex(32);
 
@@ -260,8 +272,8 @@ pub(crate) fn generate_client_info_and_ua() -> (String, String) {
     );
 
     let client_info = format!(
-        r#"{{"package_name":"com.community.oneroom","version_name":"4.0.02","version_code":{},"os":"android","os_version":"{}","install_ch":"ps","device_id":"{}","install_store":"ps","gaid":"{}","brand":"{}","model":"{}","system_language":"en","net":"{}","region":"US","timezone":"{}","sp_code":"40401","X-Play-Mode":"2"}}"#,
-        version_code, android.0, device_id, gaid, device.1, device.0, network, timezone
+        r#"{{"package_name":"com.community.oneroom","version_name":"4.0.02","version_code":{},"os":"android","os_version":"{}","install_ch":"ps","device_id":"{}","install_store":"ps","gaid":"{}","brand":"{}","model":"{}","system_language":"en","net":"{}","region":"IN","timezone":"Asia/Kolkata","sp_code":"404","X-Play-Mode":"2"}}"#,
+        version_code, android.0, device_id, gaid, device.1, device.0, network
     );
 
     (user_agent, client_info)
@@ -340,7 +352,9 @@ mod tests {
             .as_i64()
             .expect("version_code is number");
         assert_eq!(code, 50020126);
-        assert_eq!(parsed["sp_code"], "40401");
+        assert_eq!(parsed["region"], "IN");
+        assert_eq!(parsed["timezone"], "Asia/Kolkata");
+        assert_eq!(parsed["sp_code"], "404");
         assert_eq!(parsed["X-Play-Mode"], "2");
     }
 
@@ -360,7 +374,7 @@ mod tests {
         assert_eq!(headers.get("x-m-version").unwrap(), "4.0.02");
         assert!(headers.get("x-client-token").is_some());
         assert!(headers.get("x-tr-signature").is_some());
-        assert!(headers.get("x-forwarded-for").is_none());
+        assert!(headers.get("x-forwarded-for").is_some());
         assert_eq!(headers.get("authorization").unwrap(), "Bearer fake_token");
     }
 
@@ -378,6 +392,6 @@ mod tests {
         assert_eq!(headers.get("accept").unwrap(), "application/json");
         assert_eq!(headers.get("content-type").unwrap(), "application/json");
         assert_eq!(headers.get("x-m-version").unwrap(), "4.0.02");
-        assert!(headers.get("x-forwarded-for").is_none());
+        assert!(headers.get("x-forwarded-for").is_some());
     }
 }
