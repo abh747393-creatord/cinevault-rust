@@ -357,10 +357,6 @@ impl MovieBoxClient {
 
     async fn parse_response(&self, resp: Response) -> Result<Value, ScraperError> {
         let status = resp.status();
-        if status.as_u16() == 406 {
-            log::warn!("moviebox host returned 406 (find no content), returning empty streams structure");
-            return Ok(serde_json::json!({ "streams": [] }));
-        }
         if !status.is_success() {
             return Err(ScraperError::ApiStatus(status.as_u16()));
         }
@@ -384,6 +380,116 @@ impl MovieBoxClient {
         } else {
             Ok(body_val)
         }
+    }
+
+    pub async fn debug_probe(&self, subject_id: &str) -> Value {
+        let ip_info = match self.client.get("https://api.ipify.org?format=json").send().await {
+            Ok(resp) => resp.json::<Value>().await.ok(),
+            Err(_) => None,
+        };
+
+        let session_res = match self.ensure_session().await {
+            Ok(token) => {
+                let preview = if token.len() > 15 {
+                    &token[..15]
+                } else {
+                    &token
+                };
+                serde_json::json!({ "ok": true, "token_prefix": preview })
+            }
+            Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+        };
+
+        let token_opt = self
+            .session
+            .read()
+            .ok()
+            .and_then(|s| s.as_ref().map(|sess| sess.token.clone()));
+
+        let mut hosts_probe = Vec::new();
+        for host in HOST_POOL {
+            let path = format!("/wefeed-mobile-bff/subject-api/play-info/v2?subjectId={subject_id}");
+            let url = format!("{host}{path}");
+            let headers = build_signed_headers(
+                "GET",
+                &url,
+                None,
+                token_opt.as_deref(),
+                &self.user_agent,
+                &self.client_info,
+            );
+
+            let res = self.client.get(&url).headers(headers).send().await;
+            match res {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    let body_preview = if body.len() > 300 {
+                        &body[..300]
+                    } else {
+                        &body
+                    };
+                    hosts_probe.push(serde_json::json!({
+                        "host": host,
+                        "status": status,
+                        "body": body_preview,
+                    }));
+                }
+                Err(e) => {
+                    hosts_probe.push(serde_json::json!({
+                        "host": host,
+                        "error": e.to_string(),
+                    }));
+                }
+            }
+        }
+
+        let mut details_probe = Vec::new();
+        for host in &HOST_POOL[..2] {
+            let path = format!("/wefeed-mobile-bff/subject-api/get?subjectId={subject_id}");
+            let url = format!("{host}{path}");
+            let headers = build_signed_headers(
+                "GET",
+                &url,
+                None,
+                token_opt.as_deref(),
+                &self.user_agent,
+                &self.client_info,
+            );
+
+            let res = self.client.get(&url).headers(headers).send().await;
+            match res {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    let body_preview = if body.len() > 300 {
+                        &body[..300]
+                    } else {
+                        &body
+                    };
+                    details_probe.push(serde_json::json!({
+                        "host": host,
+                        "status": status,
+                        "body": body_preview,
+                    }));
+                }
+                Err(e) => {
+                    details_probe.push(serde_json::json!({
+                        "host": host,
+                        "error": e.to_string(),
+                    }));
+                }
+            }
+        }
+
+        serde_json::json!({
+            "outbound_ip": ip_info,
+            "session": session_res,
+            "hosts_play_info": hosts_probe,
+            "details": details_probe,
+            "client_info": self.client_info,
+            "user_agent": self.user_agent,
+        })
     }
 }
 
