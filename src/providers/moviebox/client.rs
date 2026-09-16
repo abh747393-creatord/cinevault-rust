@@ -482,11 +482,50 @@ impl MovieBoxClient {
             }
         }
 
+        let mut resources_probe = Vec::new();
+        for host in &HOST_POOL[..2] {
+            let path = format!("/wefeed-mobile-bff/subject-api/resource?page=1&perPage=20&subjectId={subject_id}");
+            let url = format!("{host}{path}");
+            let headers = build_signed_headers(
+                "GET",
+                &url,
+                None,
+                token_opt.as_deref(),
+                &self.user_agent,
+                &self.client_info,
+            );
+
+            let res = self.client.get(&url).headers(headers).send().await;
+            match res {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    let body = resp.text().await.unwrap_or_default();
+                    let body_preview = if body.len() > 300 {
+                        &body[..300]
+                    } else {
+                        &body
+                    };
+                    resources_probe.push(serde_json::json!({
+                        "host": host,
+                        "status": status,
+                        "body": body_preview,
+                    }));
+                }
+                Err(e) => {
+                    resources_probe.push(serde_json::json!({
+                        "host": host,
+                        "error": e.to_string(),
+                    }));
+                }
+            }
+        }
+
         serde_json::json!({
             "outbound_ip": ip_info,
             "session": session_res,
             "hosts_play_info": hosts_probe,
             "details": details_probe,
+            "resources": resources_probe,
             "client_info": self.client_info,
             "user_agent": self.user_agent,
         })
