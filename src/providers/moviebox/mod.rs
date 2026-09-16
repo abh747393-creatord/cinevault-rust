@@ -16,8 +16,13 @@ impl From<ScraperError> for ProviderError {
             ScraperError::ApiStatus(429) => ProviderError::RateLimited(None),
             ScraperError::ApiStatus(404) => ProviderError::NotFound,
             ScraperError::ApiStatus(s) => ProviderError::Unavailable(format!("HTTP status {s}")),
-            ScraperError::HostsExhausted => {
-                ProviderError::Unavailable("All hosts exhausted".to_string())
+            ScraperError::HostsExhausted(details) => {
+                let msg = if details.is_empty() {
+                    "All hosts exhausted".to_string()
+                } else {
+                    format!("All hosts exhausted: {}", details.join("; "))
+                };
+                ProviderError::Unavailable(msg)
             }
             ScraperError::Json(e) => ProviderError::Parsing(e.to_string()),
             ScraperError::MissingToken => ProviderError::Unavailable("Missing token".to_string()),

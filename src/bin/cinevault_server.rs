@@ -275,8 +275,14 @@ async fn debug_play_info_handler(
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let clean_id = clean_id(&id);
-    let play_info = state.service.client.get_play_info(clean_id, 0, 0).await.ok();
-    let resources = state.service.client.get_resources(clean_id, 0, 0, 1, None, 10).await.ok();
+    let play_info = match state.service.client.get_play_info(clean_id, 0, 0).await {
+        Ok(v) => serde_json::json!({ "ok": true, "data": v }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+    };
+    let resources = match state.service.client.get_resources(clean_id, 0, 0, 1, None, 10).await {
+        Ok(v) => serde_json::json!({ "ok": true, "data": v }),
+        Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+    };
     Ok(Json(serde_json::json!({
         "play_info": play_info,
         "resources": resources,

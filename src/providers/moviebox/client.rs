@@ -25,8 +25,8 @@ pub enum ScraperError {
     Reqwest(#[from] reqwest::Error),
     #[error("API error status: {0}")]
     ApiStatus(u16),
-    #[error("All hosts exhausted")]
-    HostsExhausted,
+    #[error("All hosts exhausted: {0:?}")]
+    HostsExhausted(Vec<String>),
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("Missing expected token")]
@@ -235,7 +235,7 @@ impl MovieBoxClient {
                 self.request_hosts(method, path_and_query, body, Some(&fresh_token))
                     .await
             }
-            Err(ScraperError::HostsExhausted) => {
+            Err(ScraperError::HostsExhausted(_)) => {
                 self.invalidate_session();
                 let fresh_token = self.ensure_session().await?;
                 self.request_hosts(method, path_and_query, body, Some(&fresh_token))
@@ -254,6 +254,7 @@ impl MovieBoxClient {
     ) -> Result<Value, ScraperError> {
         let start_idx = self.active_base_idx.load(Ordering::Relaxed);
         let mut backoff_ms: u64 = 50;
+        let mut attempt_errors = Vec::new();
 
         for i in 0..HOST_POOL.len() {
             if i > 0 {
@@ -316,6 +317,7 @@ impl MovieBoxClient {
                         log::warn!(
                             "moviebox host [{idx}] {host_domain} returned retryable status {status} in {elapsed_ms}ms: {err_preview}"
                         );
+                        attempt_errors.push(format!("{host_domain}: HTTP {status} - {err_preview}"));
                         if status == 429 {
                             backoff_ms = retry_after;
                         }
@@ -333,6 +335,7 @@ impl MovieBoxClient {
                             log::warn!(
                                 "moviebox host [{idx}] {host_domain} response parse failed: {error} in {elapsed_ms}ms"
                             );
+                            attempt_errors.push(format!("{host_domain}: parse failed: {error}"));
                             continue;
                         }
                     }
@@ -342,13 +345,14 @@ impl MovieBoxClient {
                     log::warn!(
                         "moviebox host [{idx}] {host_domain} request failed ({err_cat}): {error} in {elapsed_ms}ms"
                     );
+                    attempt_errors.push(format!("{host_domain}: {err_cat}: {error}"));
                     continue;
                 }
             }
         }
 
-        log::error!("moviebox: all hosts exhausted (tried {} hosts)", HOST_POOL.len());
-        Err(ScraperError::HostsExhausted)
+        log::error!("moviebox: all hosts exhausted (tried {} hosts): {:?}", HOST_POOL.len(), attempt_errors);
+        Err(ScraperError::HostsExhausted(attempt_errors))
     }
 
     async fn parse_response(&self, resp: Response) -> Result<Value, ScraperError> {
@@ -367,7 +371,7 @@ impl MovieBoxClient {
                 Ok(Ok(v)) => v,
                 Ok(Err(e)) => return Err(ScraperError::Json(e)),
                 Err(_) => {
-                    return Err(ScraperError::HostsExhausted);
+                    return Err(ScraperError::HostsExhausted(vec!["blocking task join error".to_string()]));
                 }
             };
 
