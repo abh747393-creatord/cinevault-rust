@@ -41,7 +41,6 @@ pub struct MovieBoxClient {
     active_base_idx: Arc<AtomicUsize>,
     user_agent: String,
     client_info: String,
-    spoofed_ip: String,
 }
 
 impl Default for MovieBoxClient {
@@ -79,7 +78,6 @@ impl MovieBoxClient {
 
         let (user_agent, client_info) =
             crate::providers::moviebox::crypto::generate_client_info_and_ua();
-        let spoofed_ip = crate::providers::moviebox::crypto::random_spoofed_ip();
 
         Self {
             client,
@@ -88,7 +86,6 @@ impl MovieBoxClient {
             active_base_idx: Arc::new(AtomicUsize::new(0)),
             user_agent,
             client_info,
-            spoofed_ip,
         }
     }
 
@@ -274,7 +271,6 @@ impl MovieBoxClient {
                 auth_token,
                 &self.user_agent,
                 &self.client_info,
-                &self.spoofed_ip,
             );
 
             let mut builder = match method {
@@ -301,17 +297,27 @@ impl MovieBoxClient {
                     let status = resp.status().as_u16();
 
                     if RETRY_STATUS_CODES.contains(&status) {
-                        log::warn!(
-                            "moviebox host [{idx}] {host_domain} returned retryable status {status} in {elapsed_ms}ms"
-                        );
-                        if status == 429 {
-                            backoff_ms = resp
-                                .headers()
+                        let retry_after = if status == 429 {
+                            resp.headers()
                                 .get(reqwest::header::RETRY_AFTER)
                                 .and_then(|v| v.to_str().ok())
                                 .and_then(|v| v.parse::<u64>().ok())
                                 .map(|secs| secs.saturating_mul(1000).min(3000))
-                                .unwrap_or(400);
+                                .unwrap_or(400)
+                        } else {
+                            50
+                        };
+                        let err_body = resp.text().await.unwrap_or_default();
+                        let err_preview = if err_body.len() > 300 {
+                            &err_body[..300]
+                        } else {
+                            &err_body
+                        };
+                        log::warn!(
+                            "moviebox host [{idx}] {host_domain} returned retryable status {status} in {elapsed_ms}ms: {err_preview}"
+                        );
+                        if status == 429 {
+                            backoff_ms = retry_after;
                         }
                         continue;
                     }
