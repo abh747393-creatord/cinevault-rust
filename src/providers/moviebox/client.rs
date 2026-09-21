@@ -317,7 +317,8 @@ impl MovieBoxClient {
                         log::warn!(
                             "moviebox host [{idx}] {host_domain} returned retryable status {status} in {elapsed_ms}ms: {err_preview}"
                         );
-                        attempt_errors.push(format!("{host_domain}: HTTP {status} - {err_preview}"));
+                        attempt_errors
+                            .push(format!("{host_domain}: HTTP {status} - {err_preview}"));
                         if status == 429 {
                             backoff_ms = retry_after;
                         }
@@ -328,7 +329,9 @@ impl MovieBoxClient {
 
                     match self.parse_response(resp).await {
                         Ok(val) => {
-                            log::info!("moviebox host [{idx}] {host_domain} OK ({status}) in {elapsed_ms}ms");
+                            log::info!(
+                                "moviebox host [{idx}] {host_domain} OK ({status}) in {elapsed_ms}ms"
+                            );
                             return Ok(val);
                         }
                         Err(error) => {
@@ -351,7 +354,11 @@ impl MovieBoxClient {
             }
         }
 
-        log::error!("moviebox: all hosts exhausted (tried {} hosts): {:?}", HOST_POOL.len(), attempt_errors);
+        log::error!(
+            "moviebox: all hosts exhausted (tried {} hosts): {:?}",
+            HOST_POOL.len(),
+            attempt_errors
+        );
         Err(ScraperError::HostsExhausted(attempt_errors))
     }
 
@@ -371,7 +378,9 @@ impl MovieBoxClient {
                 Ok(Ok(v)) => v,
                 Ok(Err(e)) => return Err(ScraperError::Json(e)),
                 Err(_) => {
-                    return Err(ScraperError::HostsExhausted(vec!["blocking task join error".to_string()]));
+                    return Err(ScraperError::HostsExhausted(vec![
+                        "blocking task join error".to_string(),
+                    ]));
                 }
             };
 
@@ -383,7 +392,12 @@ impl MovieBoxClient {
     }
 
     pub async fn debug_probe(&self, subject_id: &str) -> Value {
-        let ip_info = match self.client.get("https://api.ipify.org?format=json").send().await {
+        let ip_info = match self
+            .client
+            .get("https://api.ipify.org?format=json")
+            .send()
+            .await
+        {
             Ok(resp) => resp.json::<Value>().await.ok(),
             Err(_) => None,
         };
@@ -408,7 +422,8 @@ impl MovieBoxClient {
 
         let mut hosts_probe = Vec::new();
         for host in HOST_POOL {
-            let path = format!("/wefeed-mobile-bff/subject-api/play-info/v2?subjectId={subject_id}");
+            let path =
+                format!("/wefeed-mobile-bff/subject-api/play-info/v2?subjectId={subject_id}");
             let url = format!("{host}{path}");
             let headers = build_signed_headers(
                 "GET",
@@ -484,7 +499,9 @@ impl MovieBoxClient {
 
         let mut resources_probe = Vec::new();
         for host in &HOST_POOL[..2] {
-            let path = format!("/wefeed-mobile-bff/subject-api/resource?page=1&perPage=20&subjectId={subject_id}");
+            let path = format!(
+                "/wefeed-mobile-bff/subject-api/resource?page=1&perPage=20&subjectId={subject_id}"
+            );
             let url = format!("{host}{path}");
             let headers = build_signed_headers(
                 "GET",

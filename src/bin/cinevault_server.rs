@@ -4,15 +4,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
-use moviebox_tui::providers::models::{CatalogItem, MediaDetails, ProviderError, ProviderKind, Release};
 use moviebox_tui::providers::ReleaseProvider;
+use moviebox_tui::providers::models::{
+    CatalogItem, MediaDetails, ProviderError, ProviderKind, Release,
+};
 use moviebox_tui::service::MovieBoxService;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -48,11 +50,15 @@ impl AppState {
                     let proto = h
                         .get("x-forwarded-proto")
                         .and_then(|p| p.to_str().ok())
-                        .unwrap_or(if host_str.starts_with("localhost") || host_str.starts_with("127.0.0.1") {
-                            "http"
-                        } else {
-                            "https"
-                        });
+                        .unwrap_or(
+                            if host_str.starts_with("localhost")
+                                || host_str.starts_with("127.0.0.1")
+                            {
+                                "http"
+                            } else {
+                                "https"
+                            },
+                        );
                     return format!("{proto}://{host_str}");
                 }
             }
@@ -305,31 +311,41 @@ async fn streams_handler(
     let clean_id = clean_id(&id);
 
     let raw_releases: Vec<Release> = match provider {
-        ProviderKind::MovieBox => {
-            state.service.client.episode_streams(clean_id, season, episode).await.map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            })?
-        }
+        ProviderKind::MovieBox => state
+            .service
+            .client
+            .episode_streams(clean_id, season, episode)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
         ProviderKind::FourKHdHub => {
             let fourk = state.service.fourk_client.as_ref().ok_or_else(|| {
-                (StatusCode::SERVICE_UNAVAILABLE, "4KHDHub not available".to_string())
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "4KHDHub not available".to_string(),
+                )
             })?;
-            fourk.episode_streams(&id, season, episode).await.map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            })?
+            fourk
+                .episode_streams(&id, season, episode)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         }
-        ProviderKind::BdixCircleFtp => {
-            state.service.circleftp_client.episode_streams(&id, season, episode).await.map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            })?
-        }
-        ProviderKind::BdixDhakaFlix => {
-            state.service.dhakaflix_client.episode_streams(&id, season, episode).await.map_err(|e| {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            })?
-        }
+        ProviderKind::BdixCircleFtp => state
+            .service
+            .circleftp_client
+            .episode_streams(&id, season, episode)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
+        ProviderKind::BdixDhakaFlix => state
+            .service
+            .dhakaflix_client
+            .episode_streams(&id, season, episode)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?,
         ProviderKind::Addons => {
-            return Err((StatusCode::BAD_REQUEST, "Addons streams not directly resolvable".to_string()));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Addons streams not directly resolvable".to_string(),
+            ));
         }
     };
 
@@ -350,7 +366,8 @@ async fn streams_handler(
                 },
             );
 
-            let is_dash = mirror.resolver_url.ends_with(".mpd") || mirror.resolver_url.contains("/dash/");
+            let is_dash =
+                mirror.resolver_url.ends_with(".mpd") || mirror.resolver_url.contains("/dash/");
             let proxy_url = if is_dash {
                 format!("{base_url}/api/v1/stream/proxy/{ticket_id}/manifest.mpd")
             } else {
@@ -390,10 +407,12 @@ async fn stream_proxy_core(
 ) -> Result<Response, (StatusCode, String)> {
     let ticket = {
         let tickets = state.tickets.read().await;
-        tickets
-            .get(&ticket_id)
-            .cloned()
-            .ok_or_else(|| (StatusCode::NOT_FOUND, "Stream ticket invalid or expired".to_string()))?
+        tickets.get(&ticket_id).cloned().ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                "Stream ticket invalid or expired".to_string(),
+            )
+        })?
     };
 
     if ticket.created_at.elapsed() > Duration::from_secs(4 * 3600) {
@@ -434,9 +453,8 @@ async fn stream_proxy_core(
 
         // Inject <BaseURL> so DASH player requests all segments through our proxy
         let base_url = state.base_url(Some(&client_headers));
-        let base_url_tag = format!(
-            "<BaseURL>{base_url}/api/v1/stream/proxy/{ticket_id}/</BaseURL>"
-        );
+        let base_url_tag =
+            format!("<BaseURL>{base_url}/api/v1/stream/proxy/{ticket_id}/</BaseURL>");
 
         let mut rewritten = manifest_str.into_owned();
 
@@ -573,7 +591,11 @@ async fn subtitles_handler(
     let clean_id = clean_id(&id);
     let resource_id = query.resource_id.unwrap_or_default();
     let base_url = state.base_url(Some(&client_headers));
-    match state.service.get_ext_captions(clean_id, &resource_id, &[]).await {
+    match state
+        .service
+        .get_ext_captions(clean_id, &resource_id, &[])
+        .await
+    {
         Ok(captions) => {
             let web_subs = captions
                 .into_iter()
@@ -607,7 +629,12 @@ async fn subtitles_proxy_handler(
         .header("User-Agent", "MovieBox-Tui/1.0")
         .send()
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("Subtitle fetch failed: {e}")))?;
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Subtitle fetch failed: {e}"),
+            )
+        })?;
 
     let bytes = res
         .bytes()
@@ -649,7 +676,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|_| std::env::var("MOVIEBOX_LOG"))
         .unwrap_or_else(|_| "info".to_string());
     if let Ok(logger) = flexi_logger::Logger::try_with_str(&log_level) {
-        let _ = logger.log_to_stdout().format(flexi_logger::opt_format).start();
+        let _ = logger
+            .log_to_stdout()
+            .format(flexi_logger::opt_format)
+            .start();
     }
 
     let port = std::env::var("PORT")
@@ -752,8 +782,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/debug/play_info/{id}", get(debug_play_info_handler))
         .route("/api/v1/streams/{id}", get(streams_handler))
         .route("/api/v1/stream/proxy", get(stream_proxy_query_handler))
-        .route("/api/v1/stream/proxy/{ticket}", get(stream_proxy_ticket_handler))
-        .route("/api/v1/stream/proxy/{ticket}/{*file}", get(stream_proxy_file_handler))
+        .route(
+            "/api/v1/stream/proxy/{ticket}",
+            get(stream_proxy_ticket_handler),
+        )
+        .route(
+            "/api/v1/stream/proxy/{ticket}/{*file}",
+            get(stream_proxy_file_handler),
+        )
         .route("/api/v1/subtitles/{id}", get(subtitles_handler))
         .route("/api/v1/subtitles/proxy", get(subtitles_proxy_handler))
         .layer(cors)

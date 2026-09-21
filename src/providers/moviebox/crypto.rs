@@ -171,8 +171,7 @@ pub fn build_signed_headers(
     };
 
     let client_token = generate_x_client_token(ts);
-    let signature =
-        generate_x_tr_signature(method, Some(accept), content_type, url, body, ts);
+    let signature = generate_x_tr_signature(method, Some(accept), content_type, url, body, ts);
 
     let mut headers = reqwest::header::HeaderMap::new();
 
@@ -182,11 +181,6 @@ pub fn build_signed_headers(
         insert_header(&mut headers, reqwest::header::CONTENT_TYPE, ct);
     }
     insert_header(&mut headers, reqwest::header::CONNECTION, "keep-alive");
-    insert_header(
-        &mut headers,
-        reqwest::header::HeaderName::from_static("x-m-version"),
-        "4.0.02",
-    );
     insert_header(
         &mut headers,
         reqwest::header::HeaderName::from_static("x-client-token"),
@@ -278,7 +272,6 @@ fn random_uuid() -> String {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,7 +344,6 @@ mod tests {
         );
         assert_eq!(headers.get("accept").unwrap(), "application/json");
         assert!(headers.get("content-type").is_none());
-        assert_eq!(headers.get("x-m-version").unwrap(), "4.0.02");
         assert!(headers.get("x-client-token").is_some());
         assert!(headers.get("x-tr-signature").is_some());
         assert!(headers.get("x-forwarded-for").is_none());
@@ -371,7 +363,6 @@ mod tests {
         );
         assert_eq!(headers.get("accept").unwrap(), "application/json");
         assert_eq!(headers.get("content-type").unwrap(), "application/json");
-        assert_eq!(headers.get("x-m-version").unwrap(), "4.0.02");
         assert!(headers.get("x-forwarded-for").is_none());
     }
 }

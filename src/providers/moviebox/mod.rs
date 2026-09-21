@@ -6,6 +6,8 @@ pub mod title;
 
 pub use title::clean_moviebox_title;
 
+pub const STREAM_REFERER: &str = "https://sportslive.wine";
+
 use crate::providers::models::{CatalogItem, MediaDetails, ProviderError, ProviderKind};
 use crate::providers::{Provider, ProviderCapabilities};
 
@@ -89,8 +91,10 @@ impl crate::providers::ReleaseProvider for client::MovieBoxClient {
                 .and_then(|arr| {
                     let matching_item = if season > 0 || episode > 0 {
                         arr.iter().find(|item| {
-                            let item_se = item.get("se").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                            let item_ep = item.get("ep").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            let item_se =
+                                item.get("se").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                            let item_ep =
+                                item.get("ep").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                             item_se == season && item_ep == episode
                         })
                     } else {
@@ -113,13 +117,43 @@ impl crate::providers::ReleaseProvider for client::MovieBoxClient {
                 })
         });
 
-        let mut releases = match play_info_res {
-            Ok(json) => adapt::moviebox_play_info_json_to_releases(&json, season, episode, self.user_agent()),
-            Err(e) => {
-                log::warn!("moviebox play_info failed: {e}; falling back to direct resources");
-                Vec::new()
+        let mut releases = Vec::new();
+        let mut seen_urls = std::collections::HashSet::new();
+
+        if let Ok(json) = play_info_res {
+            for rel in adapt::moviebox_play_info_json_to_releases(
+                &json,
+                season,
+                episode,
+                self.user_agent(),
+            ) {
+                if let Some(url) = rel.direct_url() {
+                    let base = url.split('?').next().unwrap_or(url).to_string();
+                    if !base.is_empty() {
+                        seen_urls.insert(base);
+                    }
+                }
+                releases.push(rel);
             }
-        };
+        }
+
+        if let Ok(res_json) = resources_res {
+            for rel in adapt::moviebox_resource_json_to_releases(&res_json) {
+                if let Some(url) = rel.direct_url() {
+                    let base = url.split('?').next().unwrap_or(url).to_string();
+                    if !base.is_empty() && seen_urls.contains(&base) {
+                        continue;
+                    }
+                    seen_urls.insert(base);
+                }
+                if (season == 0 && episode == 0)
+                    || (rel.season == Some(season) && rel.episode == Some(episode))
+                    || (rel.season.is_none() && rel.episode.is_none())
+                {
+                    releases.push(rel);
+                }
+            }
+        }
 
         if let Some(upload_id) = upload_resource_id {
             for rel in &mut releases {
@@ -129,49 +163,18 @@ impl crate::providers::ReleaseProvider for client::MovieBoxClient {
             }
         }
 
-        // If releases are empty from play_info (or play_info returned no streams / 406),
-        // populate releases directly from user-uploaded direct stream resources!
         if releases.is_empty() {
-            if let Ok(ref val) = resources_res {
-                let items_arr = val
-                    .get("list")
-                    .or_else(|| val.get("data").and_then(|d| d.get("list")))
-                    .and_then(|l| l.as_array());
-                if let Some(arr) = items_arr {
-                    for item in arr {
-                        let rel = adapt::moviebox_resource_item_to_release(item);
-                        if (season == 0 && episode == 0)
-                            || (rel.season == Some(season) && rel.episode == Some(episode))
-                        {
-                            releases.push(rel);
-                        }
-                    }
-                }
-            }
+            return Err(ProviderError::Unavailable(
+                "No stream sources available".to_string(),
+            ));
         }
 
-        // Secondary fallback to fetch_resource_page if still empty
-        if releases.is_empty() {
-            let page = if episode > 0 {
-                (episode - 1) / 20 + 1
-            } else {
-                1
-            };
-            if let Ok((items, _)) = self.fetch_resource_page(id, 0, page).await {
-                for item in items {
-                    let rel = adapt::moviebox_resource_item_to_release(&item);
-                    if (season == 0 && episode == 0)
-                        || (rel.season == Some(season) && rel.episode == Some(episode))
-                    {
-                        releases.push(rel);
-                    }
-                }
-            }
-        }
-
-        if releases.is_empty() {
-            return Err(ProviderError::NotFound);
-        }
+        releases.sort_by(|left, right| {
+            right
+                .resolution_u64()
+                .cmp(&left.resolution_u64())
+                .then_with(|| right.size_bytes.cmp(&left.size_bytes))
+        });
 
         Ok(releases)
     }
@@ -272,13 +275,13 @@ impl MovieBoxClient {
 
         let path = if season == 0 && episode == 0 {
             format!(
-                "/wefeed-mobile-bff/subject-api/resource?page={}&perPage={}&subjectId={}{}",
-                page, per_page, subject_id, res_param
+                "/wefeed-mobile-bff/subject-api/resource?subjectId={}&page={}&perPage={}{}",
+                subject_id, page, per_page, res_param
             )
         } else {
             format!(
-                "/wefeed-mobile-bff/subject-api/resource?ep={}&page={}&perPage={}&se={}&subjectId={}{}",
-                episode, page, per_page, season, subject_id, res_param
+                "/wefeed-mobile-bff/subject-api/resource?subjectId={}&se={}&ep={}&page={}&perPage={}{}",
+                subject_id, season, episode, page, per_page, res_param
             )
         };
         self.get(&path).await
@@ -297,8 +300,8 @@ impl MovieBoxClient {
         };
 
         let path = format!(
-            "/wefeed-mobile-bff/subject-api/resource?page={}&perPage=20&subjectId={}{}",
-            page, subject_id, res_param
+            "/wefeed-mobile-bff/subject-api/resource?subjectId={}&page={}&perPage=20{}",
+            subject_id, page, res_param
         );
 
         let res = self.get(&path).await?;
