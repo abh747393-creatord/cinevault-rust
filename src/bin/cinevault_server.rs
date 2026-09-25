@@ -476,6 +476,8 @@ async fn stream_proxy_core(
 
         // Normalize any bare 'codecs="hev1"' to standard RFC 6381 'codecs="hev1.1.6.L93.90"'
         rewritten = rewritten.replace("codecs=\"hev1\"", "codecs=\"hev1.1.6.L93.90\"");
+        // Normalize HEVC FourCC from hev1 to hvc1 so Chromium browsers with hardware HEVC can decode
+        rewritten = rewritten.replace("codecs=\"hev1", "codecs=\"hvc1");
 
         return Response::builder()
             .status(StatusCode::OK)
